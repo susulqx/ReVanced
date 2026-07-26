@@ -1,98 +1,93 @@
-@file:Suppress("unused", "UNCHECKED_CAST")
-
 package app.revanced.patches.uniqueone.subscription
 
+import app.revanced.patcher.data.BytecodeContext
 import app.revanced.patcher.extensions.InstructionExtensions.addInstructions
 import app.revanced.patcher.extensions.InstructionExtensions.removeInstructions
+import app.revanced.patcher.fingerprint.MethodFingerprint
+import app.revanced.patcher.patch.BytecodePatch
 import app.revanced.patcher.patch.PatchException
-import app.revanced.patcher.patch.bytecodePatch
+import app.revanced.patcher.patch.annotation.CompatiblePackage
+import app.revanced.patcher.patch.annotation.Patch
+import app.revanced.patcher.util.proxy.mutableTypes.MutableMethod
+import app.revanced.patcher.util.proxy.mutableTypes.MutableMethodImplementation
+import app.revanced.patches.uniqueone.subscription.fingerprints.GetSharedPreferencesFingerprint
 import com.android.tools.smali.dexlib2.AccessFlags
+import com.android.tools.smali.dexlib2.iface.ClassDef
+import com.android.tools.smali.dexlib2.iface.Field
+import com.android.tools.smali.dexlib2.iface.Method
+import com.android.tools.smali.dexlib2.iface.value.StringEncodedValue
 
-// Stable functional strings.
-private const val SP_NAME = "app_setting"
-private const val KEY_OAS = "oas"
-private const val KEY_OSV = "osv"
-private val JSON_KEYS = setOf("st", "pu", "ex", "al", "ca", "v", "te")
-
-/**
- * ReVanced bytecode patch that bypasses subscription verification in [app.unique.one].
- */
-val subscriptionBypassPatch = bytecodePatch(
+@Patch(
     name = "Subscription bypass",
     description = "Bypasses subscription verification in app.unique.one.",
+    compatiblePackages = [CompatiblePackage("app.unique.one")]
+)
+@Suppress("unused")
+object SubscriptionBypassPatch : BytecodePatch(
+    setOf(GetSharedPreferencesFingerprint)
 ) {
-    compatibleWith("app.unique.one")
+    private const val KEY_OAS = "oas"
+    private const val KEY_OSV = "osv"
+    private val JSON_KEYS = setOf("st", "pu", "ex", "al", "ca", "v", "te")
 
-    execute {
-        // 1. Locate the subscription manager class by the "app_setting" string literal.
-        val managerClass = classes.firstOrNull { classDef ->
-            classDef.methods.any { method ->
-                instructionContains(method, SP_NAME)
-            }
-        } ?: throw PatchException("Cannot locate class with string '$SP_NAME'")
+    override fun execute(context: BytecodeContext) {
+        val managerClass = GetSharedPreferencesFingerprint.result?.classDef
+            ?: throw PatchException("Cannot locate subscription manager class")
 
-        // 2. Locate methods by signature.
-        val methods = managerClass.methods
+        val mutableManager = context.classes.getOrReplaceMutable(managerClass)
 
-        val readIntMethod = methods.single { method ->
-            AccessFlags.STATIC.isSet(method.accessFlags) &&
-            method.returnType == "I" &&
-            method.parameterTypes.size == 2 &&
-            method.parameterTypes[0] == "Ljava/lang/String;" &&
-            method.parameterTypes[1] == "I"
+        // (String, int) -> int  : SP int reader
+        val readIntMethod = managerClass.methods.single { m: Method ->
+            AccessFlags.STATIC.isSet(m.accessFlags) &&
+            m.returnType == "I" &&
+            m.parameterTypes.size == 2 &&
+            m.parameterTypes[0] == "Ljava/lang/String;" &&
+            m.parameterTypes[1] == "I"
         }
 
-        val getDataMethod = methods.single { method ->
-            AccessFlags.STATIC.isSet(method.accessFlags) &&
-            method.parameterTypes.isEmpty() &&
-            method.returnType.startsWith("L") &&
-            method.returnType !in setOf(
+        // () -> lf  : subscription data factory
+        val getDataMethod = managerClass.methods.single { m: Method ->
+            AccessFlags.STATIC.isSet(m.accessFlags) &&
+            m.parameterTypes.isEmpty() &&
+            m.returnType.startsWith("L") &&
+            m.returnType !in setOf(
                 "Landroid/content/SharedPreferences;",
                 "Ljava/lang/String;",
                 "Ljava/lang/Object;"
             )
         }
 
-        // 3. Discover and verify the subscription data class (lf).
+        // Discover and verify lf
         val dataClassName = getDataMethod.returnType
-        val dataClass = classes.firstOrNull { it.name == dataClassName }
-            ?: throw PatchException("Cannot locate class $dataClassName")
+        val dataClass = context.classes.first { it.name == dataClassName }
+        val instanceFields = dataClass.fields.filter { !AccessFlags.STATIC.isSet(it.accessFlags) }
+        if (instanceFields.size != 7)
+            throw PatchException("Expected 7 fields in $dataClassName, got ${instanceFields.size}")
 
-        val instanceFields = dataClass.fields.filter {
-            !AccessFlags.STATIC.isSet(it.accessFlags)
-        }
-        if (instanceFields.size != 7) {
-            throw PatchException("Expected 7 instance fields in $dataClassName, got ${instanceFields.size}")
-        }
-
-        // 4. Build field map from annotation "value" elements (JSON keys).
-        val fieldByKey = mutableMapOf<String, String>() // key -> fieldName
+        // Map JSON keys -> field names via annotation "value"
+        val fieldByKey = mutableMapOf<String, String>()
         for (field in instanceFields) {
-            for (annotation in field.annotations) {
-                for (element in annotation.elements) {
-                    if (element.name == "value") {
-                        fieldByKey[element.value.toString()] = field.name
+            for (ann in field.annotations) {
+                for (el in ann.elements) {
+                    if (el.name == "value" && el.value is StringEncodedValue) {
+                        fieldByKey[el.value.value] = field.name
                     }
                 }
             }
         }
         val missing = JSON_KEYS.filter { it !in fieldByKey }
-        if (missing.isNotEmpty()) {
-            throw PatchException("Missing JSON keys in $dataClassName: $missing")
+        if (missing.isNotEmpty()) throw PatchException("Missing JSON keys: $missing")
+
+        // Static cache field (type == dataClassName)
+        val cacheField = managerClass.fields.firstOrNull { f ->
+            AccessFlags.STATIC.isSet(f.accessFlags) && f.type == dataClassName
         }
 
-        // 5. Find the static cache field (type matches data class).
-        val cacheFieldName = managerClass.fields.firstOrNull { field ->
-            AccessFlags.STATIC.isSet(field.accessFlags) && field.type == dataClassName
-        }?.let { "${it.name}:${it.type}" }
+        // ---- Apply patches ----
 
-        // 6. Patch methods on the mutable class.
-        val mutableManager = managerClass.mutableClass
-
-        // (String,int)->int reader: return 1 for "oas", 0 for "osv", passthrough otherwise.
-        val mutableReadInt = mutableManager.methods.first { it.name == readIntMethod.name }
-        mutableReadInt.removeInstructions(0, mutableReadInt.implementation!!.instructions.size)
-        mutableReadInt.addInstructions(0, """
+        // 1. readInt: return 1 for "oas", 0 for "osv"
+        val mReadInt = mutableManager.methods.first { it.name == readIntMethod.name }
+        mReadInt.replaceBody(3, """
             const-string v0, "$KEY_OAS"
             invoke-virtual {p0, v0}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
             move-result v0
@@ -110,10 +105,9 @@ val subscriptionBypassPatch = bytecodePatch(
             return p1
         """.trimIndent())
 
-        // ()->lf factory: build and return a fully populated fake lf.
-        val mutableGetData = mutableManager.methods.first { it.name == getDataMethod.name }
-        mutableGetData.removeInstructions(0, mutableGetData.implementation!!.instructions.size)
-        mutableGetData.addInstructions(0, buildString {
+        // 2. getData: construct fake lf
+        val mGetData = mutableManager.methods.first { it.name == getDataMethod.name }
+        mGetData.replaceBody(4, buildString {
             appendLine("new-instance v0, $dataClassName")
             appendLine("invoke-direct {v0}, $dataClassName-><init>()V")
             fieldByKey["st"]?.let { appendLine("const/4 v1, 0x1"); appendLine("iput v1, v0, $dataClassName->$it:I") }
@@ -125,41 +119,30 @@ val subscriptionBypassPatch = bytecodePatch(
             fieldByKey["ca"]?.let { appendLine("iput-wide v2, v0, $dataClassName->$it:J") }
             fieldByKey["v"]?.let { appendLine("const/4 v1, 0x1"); appendLine("iput v1, v0, $dataClassName->$it:I") }
             fieldByKey["te"]?.let { appendLine("const/4 v1, 0x0"); appendLine("iput v1, v0, $dataClassName->$it:I") }
-            cacheFieldName?.let { appendLine("sput-object v0, ${managerClass.name}->$it") }
+            cacheField?.let { appendLine("sput-object v0, ${managerClass.name}->${it.name}:${it.type}") }
             appendLine("return-object v0")
-        }.toString())
+        }.trimIndent())
 
-        // ()->boolean methods: distinguish by contained string literal.
-        val booleanMethods = methods.filter { method ->
-            AccessFlags.STATIC.isSet(method.accessFlags) &&
-            method.returnType == "Z" &&
-            method.parameterTypes.isEmpty()
+        // 3. boolean methods: version check (false) + feature gate (true)
+        val boolMethods = managerClass.methods.filter { m: Method ->
+            AccessFlags.STATIC.isSet(m.accessFlags) && m.returnType == "Z" && m.parameterTypes.isEmpty()
         }
+        val versionCheck = boolMethods.single { hasString(it, KEY_OSV) }
+        val featureGate = boolMethods.single { hasString(it, KEY_OAS) && it.name != versionCheck.name }
 
-        val versionCheck = booleanMethods.single { instructionContains(it, KEY_OSV) }
-        val featureGate = booleanMethods.single {
-            instructionContains(it, KEY_OAS) && it.name != versionCheck.name
-        }
+        val mVersion = mutableManager.methods.first { it.name == versionCheck.name }
+        mVersion.replaceBody(1, "const/4 v0, 0x0\nreturn v0")
 
-        fun patchBoolean(name: String, value: Int) {
-            val m = mutableManager.methods.first { it.name == name }
-            m.removeInstructions(0, m.implementation!!.instructions.size)
-            m.addInstructions(0, "const/4 v0, 0x${value.toString(16)}\n    return v0")
-        }
-        patchBoolean(versionCheck.name, 0)   // false -> path1
-        patchBoolean(featureGate.name, 1)    // true  -> feature gates open
+        val mFeature = mutableManager.methods.first { it.name == featureGate.name }
+        mFeature.replaceBody(1, "const/4 v0, 0x1\nreturn v0")
     }
-}
 
-/** Checks whether any instruction in [method] contains the string [value]. */
-private fun instructionContains(method: Any, value: String): Boolean {
-    // Use reflection to access implementation/instructions safely
-    // without hardcoding dexlib2 types that may have module access restrictions.
-    return try {
-        val impl = method.javaClass.getMethod("getImplementation").invoke(method) ?: return false
-        val instructions = impl.javaClass.getMethod("getInstructions").invoke(impl) as? Iterable<*> ?: return false
-        instructions.any { it.toString().contains("\"$value\"") }
-    } catch (_: Exception) {
-        false
+    private fun hasString(method: Method, value: String): Boolean {
+        return method.implementation?.instructions?.any { it.toString().contains("\"$value\"") } == true
+    }
+
+    private fun MutableMethod.replaceBody(registerCount: Int, smali: String) {
+        this.implementation = MutableMethodImplementation(registerCount)
+        this.addInstructions(0, smali)
     }
 }

@@ -21,22 +21,34 @@ jobs:
 
       - name: Download original APK
         run: |
-          echo "Downloading APK from release assets"
           curl -L -o input.apk \
             "https://github.com/susulqx/ReVanced/releases/download/v1.0.0/one-1.1.6-320.apk"
           echo "APK size: $(stat -c%s input.apk) bytes"
 
+      - name: Download ReVanced CLI v4.6.0
+        run: |
+          curl -L -o revanced-cli.jar \
+            "https://github.com/ReVanced/revanced-cli/releases/download/v4.6.0/revanced-cli-4.6.0-all.jar"
+          echo "CLI size: $(stat -c%s revanced-cli.jar) bytes"
+
       - name: Grant execute permission to gradlew
         run: chmod +x gradlew
 
-      - name: Build patcher-runner (fat JAR)
-        run: ./gradlew :patcher-runner:shadowJar --no-daemon
+      - name: Build patches JAR
+        run: ./gradlew :patches:build --no-daemon
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_ACTOR: ${{ github.actor }}
 
       - name: Patch APK
-        run: java -jar patcher-runner/build/libs/patcher-runner-all.jar input.apk output.apk
+        run: |
+          java -jar revanced-cli.jar patch \
+            -b patches/build/libs/patches.jar \
+            -o output.apk \
+            --exclusive \
+            -i "Subscription bypass" \
+            -f \
+            input.apk
 
       - name: Upload patched APK
         uses: actions/upload-artifact@v4
