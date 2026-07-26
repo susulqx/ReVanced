@@ -1,12 +1,9 @@
 name: Build & Patch APK
 
 on:
-  workflow_dispatch:
-    inputs:
-      apk_url:
-        description: 'Download URL of the original app.unique.one APK'
-        required: true
-        type: string
+  push:
+    branches:
+      - main
 
 jobs:
   patch:
@@ -24,8 +21,9 @@ jobs:
 
       - name: Download original APK
         run: |
-          echo "Downloading APK from ${{ inputs.apk_url }}"
-          curl -L -o input.apk "${{ inputs.apk_url }}"
+          echo "Downloading APK from release assets"
+          curl -L -o input.apk \
+            "https://github.com/susulqx/ReVanced/releases/download/v1.0.0/one-1.1.6-320.apk"
           echo "APK size: $(stat -c%s input.apk) bytes"
 
       - name: Grant execute permission to gradlew
