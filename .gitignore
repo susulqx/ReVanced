@@ -1,7 +1,6 @@
 # Gradle
 .gradle/
 build/
-!gradle/wrapper/gradle-wrapper.jar
 
 # IDE
 .idea/
@@ -20,3 +19,6 @@ gradle.properties
 *.apk
 *.dex
 *.jar
+
+# But keep the Gradle wrapper JAR
+!gradle/wrapper/gradle-wrapper.jar
