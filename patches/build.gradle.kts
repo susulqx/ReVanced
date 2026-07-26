@@ -24,6 +24,8 @@ repositories {
 
 dependencies {
     implementation(libs.revanced.patcher)
+    // Required for direct dexlib2 API access (AccessFlags, etc.)
+    implementation(libs.smali.dexlib2)
 }
 
 kotlin {

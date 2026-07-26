@@ -1,7 +1,7 @@
 package app.revanced.runner
 
 import app.revanced.patcher.patcher
-import app.revanced.patches.uniqueone.subscription.SubscriptionBypassPatch
+import app.revanced.patches.uniqueone.subscription.subscriptionBypassPatch
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -45,7 +45,7 @@ fun main(args: Array<String>) {
     ) { packageName, versionName ->
         logger.info("Target: $packageName v$versionName")
         // Return the patches to apply.
-        setOf(SubscriptionBypassPatch)
+        setOf(subscriptionBypassPatch)
     }
 
     // ---- Execute patches ----
