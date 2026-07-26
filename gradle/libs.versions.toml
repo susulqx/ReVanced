@@ -1,0 +1,9 @@
+[versions]
+kotlin = "2.0.21"
+revanced-patcher = "21.0.0"
+
+[libraries]
+revanced-patcher = { module = "app.revanced:revanced-patcher", version.ref = "revanced-patcher" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
