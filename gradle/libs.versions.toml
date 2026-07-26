@@ -1,9 +1,11 @@
 [versions]
 kotlin = "2.0.21"
 revanced-patcher = "19.3.1"
+multidexlib2 = "2.5.3-a3836654"
 
 [libraries]
 revanced-patcher = { module = "app.revanced:revanced-patcher", version.ref = "revanced-patcher" }
+multidexlib2 = { module = "app.revanced:multidexlib2", version.ref = "multidexlib2" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

@@ -3,17 +3,13 @@ package app.revanced.patches.uniqueone.subscription
 import app.revanced.patcher.data.BytecodeContext
 import app.revanced.patcher.extensions.InstructionExtensions.addInstructions
 import app.revanced.patcher.extensions.InstructionExtensions.removeInstructions
-import app.revanced.patcher.fingerprint.MethodFingerprint
 import app.revanced.patcher.patch.BytecodePatch
 import app.revanced.patcher.patch.PatchException
 import app.revanced.patcher.patch.annotation.CompatiblePackage
 import app.revanced.patcher.patch.annotation.Patch
 import app.revanced.patcher.util.proxy.mutableTypes.MutableMethod
-import app.revanced.patcher.util.proxy.mutableTypes.MutableMethodImplementation
 import app.revanced.patches.uniqueone.subscription.fingerprints.GetSharedPreferencesFingerprint
 import com.android.tools.smali.dexlib2.AccessFlags
-import com.android.tools.smali.dexlib2.iface.ClassDef
-import com.android.tools.smali.dexlib2.iface.Field
 import com.android.tools.smali.dexlib2.iface.Method
 import com.android.tools.smali.dexlib2.iface.value.StringEncodedValue
 
@@ -31,10 +27,10 @@ object SubscriptionBypassPatch : BytecodePatch(
     private val JSON_KEYS = setOf("st", "pu", "ex", "al", "ca", "v", "te")
 
     override fun execute(context: BytecodeContext) {
-        val managerClass = GetSharedPreferencesFingerprint.result?.classDef
+        val result = GetSharedPreferencesFingerprint.result
             ?: throw PatchException("Cannot locate subscription manager class")
-
-        val mutableManager = context.classes.getOrReplaceMutable(managerClass)
+        val managerClass = result.classDef
+        val mutableManager = result.mutableClass
 
         // (String, int) -> int  : SP int reader
         val readIntMethod = managerClass.methods.single { m: Method ->
@@ -70,7 +66,7 @@ object SubscriptionBypassPatch : BytecodePatch(
             for (ann in field.annotations) {
                 for (el in ann.elements) {
                     if (el.name == "value" && el.value is StringEncodedValue) {
-                        fieldByKey[el.value.value] = field.name
+                        fieldByKey[(el.value as StringEncodedValue).value] = field.name
                     }
                 }
             }
@@ -87,7 +83,7 @@ object SubscriptionBypassPatch : BytecodePatch(
 
         // 1. readInt: return 1 for "oas", 0 for "osv"
         val mReadInt = mutableManager.methods.first { it.name == readIntMethod.name }
-        mReadInt.replaceBody(3, """
+        mReadInt.replaceBody("""
             const-string v0, "$KEY_OAS"
             invoke-virtual {p0, v0}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
             move-result v0
@@ -107,7 +103,7 @@ object SubscriptionBypassPatch : BytecodePatch(
 
         // 2. getData: construct fake lf
         val mGetData = mutableManager.methods.first { it.name == getDataMethod.name }
-        mGetData.replaceBody(4, buildString {
+        mGetData.replaceBody(buildString {
             appendLine("new-instance v0, $dataClassName")
             appendLine("invoke-direct {v0}, $dataClassName-><init>()V")
             fieldByKey["st"]?.let { appendLine("const/4 v1, 0x1"); appendLine("iput v1, v0, $dataClassName->$it:I") }
@@ -130,19 +126,20 @@ object SubscriptionBypassPatch : BytecodePatch(
         val versionCheck = boolMethods.single { hasString(it, KEY_OSV) }
         val featureGate = boolMethods.single { hasString(it, KEY_OAS) && it.name != versionCheck.name }
 
-        val mVersion = mutableManager.methods.first { it.name == versionCheck.name }
-        mVersion.replaceBody(1, "const/4 v0, 0x0\nreturn v0")
-
-        val mFeature = mutableManager.methods.first { it.name == featureGate.name }
-        mFeature.replaceBody(1, "const/4 v0, 0x1\nreturn v0")
+        mutableManager.methods.first { it.name == versionCheck.name }
+            .replaceBody("const/4 v0, 0x0\nreturn v0")
+        mutableManager.methods.first { it.name == featureGate.name }
+            .replaceBody("const/4 v0, 0x1\nreturn v0")
     }
 
     private fun hasString(method: Method, value: String): Boolean {
         return method.implementation?.instructions?.any { it.toString().contains("\"$value\"") } == true
     }
 
-    private fun MutableMethod.replaceBody(registerCount: Int, smali: String) {
-        this.implementation = MutableMethodImplementation(registerCount)
+    private fun MutableMethod.replaceBody(smali: String) {
+        val impl = this.implementation ?: throw PatchException("No implementation for ${this.name}")
+        val count = impl.instructions.size
+        if (count > 0) this.removeInstructions(0, count)
         this.addInstructions(0, smali)
     }
 }

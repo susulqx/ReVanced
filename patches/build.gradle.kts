@@ -23,6 +23,7 @@ repositories {
 
 dependencies {
     implementation(libs.revanced.patcher)
+    implementation(libs.multidexlib2)
 }
 
 kotlin {
