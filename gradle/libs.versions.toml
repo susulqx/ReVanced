@@ -1,11 +1,11 @@
 [versions]
 kotlin = "2.0.21"
 revanced-patcher = "19.3.1"
-multidexlib2 = "2.5.3-a3836654"
+smali = "3.0.5"
 
 [libraries]
 revanced-patcher = { module = "app.revanced:revanced-patcher", version.ref = "revanced-patcher" }
-multidexlib2 = { module = "app.revanced:multidexlib2", version.ref = "multidexlib2" }
+smali-dexlib2 = { module = "com.android.tools.smali:smali-dexlib2", version.ref = "smali" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
